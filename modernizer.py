@@ -33,7 +33,7 @@ client = AzureOpenAI(
 # =========================================================
 # SAFE MODEL CALL WRAPPER
 # =========================================================
-def safe_completion(messages, max_tokens=4000):
+def safe_completion(messages, max_tokens=10000):
     try:
         response = client.chat.completions.create(
             model=DEPLOYMENT_NAME,
@@ -188,7 +188,7 @@ Strict JSON only.
         {"role": "user", "content": json.dumps(aggregated_data)}
     ]
 
-    return safe_completion(messages, max_tokens=4000)
+    return safe_completion(messages, max_tokens=10000)
 
 
 # =========================================================
