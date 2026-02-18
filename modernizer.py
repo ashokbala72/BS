@@ -33,64 +33,61 @@ client = AzureOpenAI(
 # =========================================================
 # SAFE MODEL CALL WRAPPER
 # =========================================================
-def safe_completion(messages, max_tokens=10000):
-    try:
-        response = client.chat.completions.create(
-            model=DEPLOYMENT_NAME,
-            messages=messages,
-            temperature=0,
-            max_tokens=max_tokens,
-            response_format={"type": "json_object"}
-        )
+def safe_completion(messages, max_tokens=12000):
+    response = client.chat.completions.create(
+        model=DEPLOYMENT_NAME,
+        messages=messages,
+        temperature=0,
+        max_tokens=max_tokens,
+        response_format={"type": "json_object"}
+    )
 
-        content = response.choices[0].message.content
+    content = response.choices[0].message.content
 
-        if not content:
-            raise ValueError("Model returned empty content")
+    if not content:
+        raise ValueError("Model returned empty content")
 
-        content = content.strip()
-
-        try:
-            return json.loads(content)
-        except json.JSONDecodeError:
-            st.error("Model returned invalid JSON.")
-            st.code(content[:3000])
-            raise
-
-    except Exception as e:
-        st.error(f"Azure OpenAI call failed: {str(e)}")
-        raise
+    return json.loads(content.strip())
 
 
 # =========================================================
 # CHUNKING LOGIC
 # =========================================================
 def split_into_chunks(text, max_chars=15000):
-    chunks = []
-    start = 0
-    while start < len(text):
-        end = start + max_chars
-        chunks.append(text[start:end])
-        start = end
-    return chunks
+    return [text[i:i+max_chars] for i in range(0, len(text), max_chars)]
 
 
 # =========================================================
-# PHASE 1: EXTRACT STRUCTURE
+# PHASE 1: DEEP STRUCTURAL EXTRACTION
 # =========================================================
 def extract_from_large_cobol(cobol_code):
 
     system_prompt = """
-You are a COBOL modernization analyzer.
+You are a senior COBOL reverse engineering expert.
 
-Extract ONLY:
+Perform deep structural extraction.
+
+Return STRICT JSON:
+
 {
-    "purpose": "",
-    "entities": [],
-    "business_rules": []
+  "purpose": "",
+  "entities": [],
+  "business_rules": [],
+  "control_flow": [],
+  "conditional_flags": [],
+  "file_io_operations": [],
+  "external_calls": [],
+  "data_lineage": [],
+  "update_logic": []
 }
 
-Strict JSON only.
+Capture:
+- IF nesting and PERFORM chains
+- CICS READ/WRITE/REWRITE/DELETE
+- CALL statements
+- Indicator/flag-driven behavior
+- Variable derivation and usage
+- Amendment/update logic
 """
 
     chunks = split_into_chunks(cobol_code)
@@ -98,7 +95,13 @@ Strict JSON only.
     aggregated = {
         "purpose": "",
         "entities": [],
-        "business_rules": []
+        "business_rules": [],
+        "control_flow": [],
+        "conditional_flags": [],
+        "file_io_operations": [],
+        "external_calls": [],
+        "data_lineage": [],
+        "update_logic": []
     }
 
     progress = st.progress(0)
@@ -110,48 +113,47 @@ Strict JSON only.
             {"role": "user", "content": chunk}
         ]
 
-        try:
-            result = safe_completion(messages)
+        result = safe_completion(messages)
 
-            aggregated["entities"].extend(result.get("entities", []))
-            aggregated["business_rules"].extend(result.get("business_rules", []))
-
-            if not aggregated["purpose"]:
-                aggregated["purpose"] = result.get("purpose", "")
-
-        except Exception as e:
-            return {"error": f"Chunk {i} failed: {str(e)}"}
+        for key in aggregated.keys():
+            if key == "purpose":
+                if not aggregated["purpose"]:
+                    aggregated["purpose"] = result.get("purpose", "")
+            else:
+                aggregated[key].extend(result.get(key, []))
 
         progress.progress((i + 1) / len(chunks))
-
-    aggregated["entities"] = list(set(aggregated["entities"]))
-    aggregated["business_rules"] = list(set(aggregated["business_rules"]))
 
     return aggregated
 
 
 # =========================================================
-# PHASE 2: SYNTHESIZE RULES
+# PHASE 2: FLOW-AWARE SYNTHESIS
 # =========================================================
 def synthesize_business_rules(aggregated):
 
     system_prompt = """
-You are a senior ERP architect.
+You are an enterprise modernization architect.
 
-Based on the extracted entities and business rules,
-synthesize a comprehensive and complete business rule set.
+Synthesize a traceable, flow-aware system model.
 
-Expand implicit logic.
-Merge related rules.
-Infer cross-process workflows.
-Improve clarity and structure.
+- Map business rules to control paths
+- Associate rules with flags and indicators
+- Link file operations to validations
+- Connect external calls to process steps
+- Preserve data lineage
+- Detail update/amendment behavior
 
 Return STRICT JSON:
 
 {
-    "purpose": "",
-    "entities": [],
-    "business_rules": []
+  "purpose": "",
+  "process_map": [],
+  "business_rules": [],
+  "control_flow": [],
+  "external_dependencies": [],
+  "data_lineage": [],
+  "risk_areas": []
 }
 """
 
@@ -164,141 +166,120 @@ Return STRICT JSON:
 
 
 # =========================================================
-# PHASE 3: GENERATE MODERNIZATION ARTIFACTS
+# PHASE 3: FULL MODERNIZATION OUTPUT
 # =========================================================
-def generate_full_modernization(aggregated_data):
+def generate_full_modernization(synthesized_data):
 
     system_prompt = """
-Using the extracted and synthesized business logic,
-generate full modernization output.
+Generate enterprise-grade modernization artifacts.
 
-JSON STRUCTURE:
+Return STRICT JSON:
+
 {
-    "bc_mapping": {},
-    "al_code": "",
-    "etl_script": "",
-    "test_cases": []
+  "bc_mapping": {},
+  "al_code": "",
+  "etl_script": "",
+  "test_cases": [],
+  "dependency_map": [],
+  "data_lineage_map": []
 }
 
-Strict JSON only.
+Ensure:
+- Flow-aware BC mapping
+- Dependency mapping
+- Traceable AL logic
+- Data lineage documentation
 """
 
     messages = [
         {"role": "system", "content": system_prompt},
-        {"role": "user", "content": json.dumps(aggregated_data)}
+        {"role": "user", "content": json.dumps(synthesized_data)}
     ]
 
-    return safe_completion(messages, max_tokens=10000)
+    return safe_completion(messages, max_tokens=12000)
 
 
 # =========================================================
 # STREAMLIT UI
 # =========================================================
-st.set_page_config("COBOL → D365 Modernization Platform", layout="wide")
-st.title("🏭 COBOL → Dynamics 365 Business Central Modernization Engine")
+st.set_page_config("Enterprise COBOL Modernization Engine", layout="wide")
+st.title("🏭 Enterprise COBOL → Dynamics 365 Modernization Platform")
 
 tabs = st.tabs([
     "📂 Upload & Analyze",
     "📋 Business Rules",
+    "🧭 Process Flow",
+    "🔗 Dependencies",
     "🏗 BC Mapping",
     "💻 AL Code",
     "🔄 ETL Script",
-    "🧪 Test Cases"
+    "🧪 Test Cases",
+    "📊 Data Lineage"
 ])
-
 
 # =========================================================
 # TAB 1: UPLOAD
 # =========================================================
 with tabs[0]:
 
-    uploaded = st.file_uploader("Upload COBOL File", type=["cbl", "cob", "txt"])
+    uploaded = st.file_uploader("Upload COBOL File(s)", type=["cbl", "cob", "txt"])
 
     if uploaded:
         cobol_code = uploaded.read().decode("utf-8")
+        st.code(cobol_code[:2000])
 
-        st.subheader("COBOL Preview")
-        st.code(cobol_code[:3000])
+        if st.button("Run Enterprise Modernization"):
 
-        if st.button("Run Large-File Modernization"):
-
-            with st.spinner("Extracting structure from large COBOL..."):
+            with st.spinner("Deep structural extraction..."):
                 extracted = extract_from_large_cobol(cobol_code)
 
-            if "error" in extracted:
-                st.error(extracted["error"])
-            else:
-                with st.spinner("Synthesizing global business logic..."):
-                    synthesized = synthesize_business_rules(extracted)
+            with st.spinner("Flow-aware synthesis..."):
+                synthesized = synthesize_business_rules(extracted)
 
-                with st.spinner("Generating modernization artifacts..."):
-                    final = generate_full_modernization(synthesized)
+            with st.spinner("Generating modernization artifacts..."):
+                final = generate_full_modernization(synthesized)
 
-                final.update(synthesized)
-                st.session_state["analysis"] = final
-
-                st.success("Large-file modernization complete")
+            final.update(synthesized)
+            st.session_state["analysis"] = final
+            st.success("Enterprise-grade analysis complete")
 
 
 # =========================================================
-# TAB 2: BUSINESS RULES
+# TABS DISPLAY
 # =========================================================
+result = st.session_state.get("analysis")
+
 with tabs[1]:
-    result = st.session_state.get("analysis")
-    if result and "business_rules" in result:
-        st.json(result["business_rules"])
-    else:
-        st.info("Run analysis first.")
+    if result:
+        st.json(result.get("business_rules", []))
 
-
-# =========================================================
-# TAB 3: BC MAPPING
-# =========================================================
 with tabs[2]:
-    result = st.session_state.get("analysis")
-    if result and "bc_mapping" in result:
-        st.json(result["bc_mapping"])
-    else:
-        st.info("Run analysis first.")
+    if result:
+        st.json(result.get("control_flow", result.get("process_map", [])))
 
-
-# =========================================================
-# TAB 4: AL CODE
-# =========================================================
 with tabs[3]:
-    result = st.session_state.get("analysis")
-    if result and "al_code" in result:
-        st.code(result["al_code"], language="al")
-        st.download_button(
-            "Download extension.al",
-            result["al_code"],
-            file_name="extension.al"
-        )
-    else:
-        st.info("Run analysis first.")
+    if result:
+        st.json(result.get("dependency_map", result.get("external_dependencies", [])))
 
-
-# =========================================================
-# TAB 5: ETL SCRIPT
-# =========================================================
 with tabs[4]:
-    result = st.session_state.get("analysis")
-    if result and "etl_script" in result:
-        st.code(result["etl_script"], language="python")
-    else:
-        st.info("Run analysis first.")
+    if result:
+        st.json(result.get("bc_mapping", {}))
 
-
-# =========================================================
-# TAB 6: TEST CASES
-# =========================================================
 with tabs[5]:
-    result = st.session_state.get("analysis")
-    if result and "test_cases" in result:
-        st.json(result["test_cases"])
-    else:
-        st.info("Run analysis first.")
+    if result:
+        st.code(result.get("al_code", ""), language="al")
 
+with tabs[6]:
+    if result:
+        st.code(result.get("etl_script", ""), language="python")
+
+with tabs[7]:
+    if result:
+        st.json(result.get("test_cases", []))
+
+with tabs[8]:
+    if result:
+        st.json(result.get("data_lineage_map", result.get("data_lineage", [])))
 
 st.markdown("---")
 st.markdown("⚠️ Human validation required before production deployment.")
