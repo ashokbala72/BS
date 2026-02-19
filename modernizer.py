@@ -1,11 +1,18 @@
 import streamlit as st
 import json
 import os
+import time
 from dotenv import load_dotenv
 from openai import AzureOpenAI
 
 # =========================================================
-# LOAD ENV
+# PAGE CONFIG
+# =========================================================
+st.set_page_config("Enterprise COBOL Modernization Engine", layout="wide")
+st.title("🏭 Enterprise COBOL → Dynamics 365 Business Central Modernization Engine")
+
+# =========================================================
+# LOAD ENVIRONMENT VARIABLES
 # =========================================================
 load_dotenv()
 
@@ -13,7 +20,7 @@ def clean_env(name):
     value = os.getenv(name)
     if value:
         return value.strip().strip('"').strip("'")
-    return value
+    return None
 
 AZURE_ENDPOINT = clean_env("AZURE_OPENAI_ENDPOINT")
 AZURE_KEY = clean_env("AZURE_OPENAI_API_KEY")
@@ -31,63 +38,58 @@ client = AzureOpenAI(
 )
 
 # =========================================================
-# SAFE MODEL CALL WRAPPER
+# SAFE MODEL CALL
 # =========================================================
-def safe_completion(messages, max_tokens=12000):
-    response = client.chat.completions.create(
-        model=DEPLOYMENT_NAME,
-        messages=messages,
-        temperature=0,
-        max_tokens=max_tokens,
-        response_format={"type": "json_object"}
-    )
+def safe_completion(messages, max_tokens=14000, retries=3):
+    for attempt in range(retries):
+        try:
+            response = client.chat.completions.create(
+                model=DEPLOYMENT_NAME,
+                messages=messages,
+                temperature=0,
+                max_tokens=max_tokens,
+                response_format={"type": "json_object"}
+            )
+            content = response.choices[0].message.content
+            return json.loads(content)
+        except Exception as e:
+            st.warning(f"Attempt {attempt+1} failed: {e}")
+            time.sleep(2 ** attempt)
 
-    content = response.choices[0].message.content
-
-    if not content:
-        raise ValueError("Model returned empty content")
-
-    return json.loads(content.strip())
-
-
-# =========================================================
-# CHUNKING LOGIC
-# =========================================================
-def split_into_chunks(text, max_chars=15000):
-    return [text[i:i+max_chars] for i in range(0, len(text), max_chars)]
-
+    st.error("Model failed after retries.")
+    return {}
 
 # =========================================================
-# PHASE 1: DEEP STRUCTURAL EXTRACTION
+# UTILITIES
+# =========================================================
+def split_into_chunks(text, max_lines=300):
+    lines = text.splitlines()
+    return ["\n".join(lines[i:i+max_lines]) for i in range(0, len(lines), max_lines)]
+
+def dedupe_list(existing, new_items):
+    for item in new_items:
+        if item not in existing:
+            existing.append(item)
+
+# =========================================================
+# PHASE 1 – EXTRACTION
 # =========================================================
 def extract_from_large_cobol(cobol_code):
 
     system_prompt = """
-You are a senior COBOL reverse engineering expert.
-
-Perform deep structural extraction.
+Extract ALL business-relevant logic from COBOL.
 
 Return STRICT JSON:
-
 {
   "purpose": "",
   "entities": [],
-  "business_rules": [],
+  "business_rules": [{"rule_id": "", "description": "", "source_lines": []}],
   "control_flow": [],
   "conditional_flags": [],
   "file_io_operations": [],
   "external_calls": [],
-  "data_lineage": [],
-  "update_logic": []
+  "data_lineage": []
 }
-
-Capture:
-- IF nesting and PERFORM chains
-- CICS READ/WRITE/REWRITE/DELETE
-- CALL statements
-- Indicator/flag-driven behavior
-- Variable derivation and usage
-- Amendment/update logic
 """
 
     chunks = split_into_chunks(cobol_code)
@@ -100,186 +102,265 @@ Capture:
         "conditional_flags": [],
         "file_io_operations": [],
         "external_calls": [],
-        "data_lineage": [],
-        "update_logic": []
+        "data_lineage": []
     }
 
     progress = st.progress(0)
 
     for i, chunk in enumerate(chunks):
-
         messages = [
             {"role": "system", "content": system_prompt},
             {"role": "user", "content": chunk}
         ]
 
         result = safe_completion(messages)
+        if not result:
+            continue
 
-        for key in aggregated.keys():
+        for key in aggregated:
             if key == "purpose":
                 if not aggregated["purpose"]:
                     aggregated["purpose"] = result.get("purpose", "")
             else:
-                aggregated[key].extend(result.get(key, []))
+                dedupe_list(aggregated[key], result.get(key, []))
 
         progress.progress((i + 1) / len(chunks))
 
     return aggregated
 
-
 # =========================================================
-# PHASE 2: FLOW-AWARE SYNTHESIS
+# PHASE 2 – SYNTHESIS
 # =========================================================
-def synthesize_business_rules(aggregated):
+def synthesize_model(extracted):
 
     system_prompt = """
-You are an enterprise modernization architect.
-
-Synthesize a traceable, flow-aware system model.
-
-- Map business rules to control paths
-- Associate rules with flags and indicators
-- Link file operations to validations
-- Connect external calls to process steps
-- Preserve data lineage
-- Detail update/amendment behavior
+Preserve ALL business rules exactly.
 
 Return STRICT JSON:
-
 {
-  "purpose": "",
   "process_map": [],
   "business_rules": [],
-  "control_flow": [],
   "external_dependencies": [],
-  "data_lineage": [],
-  "risk_areas": []
+  "risk_areas": [],
+  "data_lineage": []
 }
 """
 
     messages = [
         {"role": "system", "content": system_prompt},
-        {"role": "user", "content": json.dumps(aggregated)}
+        {"role": "user", "content": json.dumps(extracted)}
+    ]
+
+    return safe_completion(messages)
+
+# =========================================================
+# PHASE 3 – MODERNIZATION
+# =========================================================
+def generate_modernization_artifacts(synthesized):
+
+    system_prompt = """
+Generate BC modernization artifacts.
+
+Return STRICT JSON:
+{
+  "bc_mapping": {
+      "tables": [],
+      "fields": [],
+      "transactions": [],
+      "validation_triggers": [],
+      "integration_endpoints": [],
+      "error_handlers": []
+  },
+  "al_code": "",
+  "etl_script": "",
+  "test_cases": [],
+  "dependency_map": [],
+  "data_lineage_map": [],
+  "rule_traceability_matrix": [],
+  "business_rule_preservation_percent": 0,
+  "modernization_confidence_percent": 0
+}
+"""
+
+    messages = [
+        {"role": "system", "content": system_prompt},
+        {"role": "user", "content": json.dumps(synthesized)}
+    ]
+
+    return safe_completion(messages)
+
+# =========================================================
+# BC CONFIG GENERATION
+# =========================================================
+def generate_bc_configuration(synthesized, modernized):
+
+    system_prompt = """
+Generate required Business Central configuration checklist.
+
+Return STRICT JSON:
+{
+  "environment_setup": [],
+  "number_series_setup": [],
+  "posting_setup": [],
+  "dimension_setup": [],
+  "permission_sets": [],
+  "integration_setup": [],
+  "data_migration_requirements": [],
+  "job_queue_setup": [],
+  "custom_setup_tables": [],
+  "deployment_checklist": []
+}
+"""
+    messages = [
+        {"role": "system", "content": system_prompt},
+        {"role": "user", "content": json.dumps({
+            "synthesized": synthesized,
+            "modernized": modernized
+        })}
     ]
 
     return safe_completion(messages)
 
 
-# =========================================================
-# PHASE 3: FULL MODERNIZATION OUTPUT
-# =========================================================
-def generate_full_modernization(synthesized_data):
-
-    system_prompt = """
-Generate enterprise-grade modernization artifacts.
-
-Return STRICT JSON:
-
-{
-  "bc_mapping": {},
-  "al_code": "",
-  "etl_script": "",
-  "test_cases": [],
-  "dependency_map": [],
-  "data_lineage_map": []
-}
-
-Ensure:
-- Flow-aware BC mapping
-- Dependency mapping
-- Traceable AL logic
-- Data lineage documentation
-"""
-
-    messages = [
-        {"role": "system", "content": system_prompt},
-        {"role": "user", "content": json.dumps(synthesized_data)}
-    ]
-
-    return safe_completion(messages, max_tokens=12000)
-
 
 # =========================================================
-# STREAMLIT UI
+# RULE COVERAGE
 # =========================================================
-st.set_page_config("Enterprise COBOL Modernization Engine", layout="wide")
-st.title("🏭 Enterprise COBOL → Dynamics 365 Modernization Platform")
+def calculate_rule_coverage(extracted_rules, implemented_rules):
 
-tabs = st.tabs([
-    "📂 Upload & Analyze",
+    if not extracted_rules:
+        return 0
+
+    extracted_ids = {r["rule_id"] for r in extracted_rules if "rule_id" in r}
+    implemented_ids = {
+        r["rule_id"] for r in implemented_rules
+        if r.get("implemented") is True
+    }
+
+    if not extracted_ids:
+        return 0
+
+    return round(
+        (len(extracted_ids & implemented_ids) / len(extracted_ids)) * 100,
+        2
+    )
+
+# =========================================================
+# UI TABS
+# =========================================================
+(
+    tab_upload,
+    tab_rules,
+    tab_process,
+    tab_dependencies,
+    tab_bc,
+    tab_bc_config,
+    tab_al,
+    tab_etl,
+    tab_tests,
+    tab_lineage,
+    tab_metrics,
+    tab_full
+) = st.tabs([
+    "📂 Upload",
     "📋 Business Rules",
     "🧭 Process Flow",
     "🔗 Dependencies",
     "🏗 BC Mapping",
+    "⚙️ BC Config",
     "💻 AL Code",
     "🔄 ETL Script",
     "🧪 Test Cases",
-    "📊 Data Lineage"
+    "📊 Data Lineage",
+    "📈 Metrics",
+    "🧠 Full Model"
 ])
 
 # =========================================================
-# TAB 1: UPLOAD
+# UPLOAD
 # =========================================================
-with tabs[0]:
+with tab_upload:
 
-    uploaded = st.file_uploader("Upload COBOL File(s)", type=["cbl", "cob", "txt"])
+    uploaded = st.file_uploader("Upload COBOL File", type=["cbl", "cob", "txt"])
 
     if uploaded:
         cobol_code = uploaded.read().decode("utf-8")
         st.code(cobol_code[:2000])
 
-        if st.button("Run Enterprise Modernization"):
+        if st.button("Run Enterprise Modernization", use_container_width=True):
 
-            with st.spinner("Deep structural extraction..."):
-                extracted = extract_from_large_cobol(cobol_code)
+            extracted = extract_from_large_cobol(cobol_code)
+            synthesized = synthesize_model(extracted)
+            modernized = generate_modernization_artifacts(synthesized)
+            bc_config = generate_bc_configuration(synthesized, modernized)
+            
 
-            with st.spinner("Flow-aware synthesis..."):
-                synthesized = synthesize_business_rules(extracted)
+            st.session_state["analysis"] = {
+                "extracted": extracted,
+                "synthesized": synthesized,
+                "modernized": modernized,
+                "bc_config": bc_config
+                
+            }
 
-            with st.spinner("Generating modernization artifacts..."):
-                final = generate_full_modernization(synthesized)
+            st.success("Modernization Complete.")
 
-            final.update(synthesized)
-            st.session_state["analysis"] = final
-            st.success("Enterprise-grade analysis complete")
+# =========================================================
+# LOAD DATA
+# =========================================================
+analysis = st.session_state.get("analysis", {})
+extracted = analysis.get("extracted", {})
+synthesized = analysis.get("synthesized", {})
+modernized = analysis.get("modernized", {})
+bc_config = analysis.get("bc_config", {})
 
 
 # =========================================================
-# TABS DISPLAY
+# RENDER TABS
 # =========================================================
-result = st.session_state.get("analysis")
+with tab_rules:
+    st.json(extracted.get("business_rules", []))
 
-with tabs[1]:
-    if result:
-        st.json(result.get("business_rules", []))
+with tab_process:
+    st.json(synthesized.get("process_map", []))
 
-with tabs[2]:
-    if result:
-        st.json(result.get("control_flow", result.get("process_map", [])))
+with tab_dependencies:
+    st.json(modernized.get("dependency_map", []))
 
-with tabs[3]:
-    if result:
-        st.json(result.get("dependency_map", result.get("external_dependencies", [])))
+with tab_bc:
+    st.json(modernized.get("bc_mapping", {}))
 
-with tabs[4]:
-    if result:
-        st.json(result.get("bc_mapping", {}))
+with tab_bc_config:
+    st.json(bc_config)
 
-with tabs[5]:
-    if result:
-        st.code(result.get("al_code", ""), language="al")
+with tab_al:
+    st.code(modernized.get("al_code", ""), language="al")
 
-with tabs[6]:
-    if result:
-        st.code(result.get("etl_script", ""), language="python")
+with tab_etl:
+    st.code(modernized.get("etl_script", ""), language="python")
 
-with tabs[7]:
-    if result:
-        st.json(result.get("test_cases", []))
+with tab_tests:
+    st.json(modernized.get("test_cases", []))
 
-with tabs[8]:
-    if result:
-        st.json(result.get("data_lineage_map", result.get("data_lineage", [])))
+with tab_lineage:
+    st.json(modernized.get("data_lineage_map", []))
+
+with tab_metrics:
+    st.metric("Rule Preservation",
+              modernized.get("business_rule_preservation_percent", 0))
+    st.metric("Modernization Confidence",
+              modernized.get("modernization_confidence_percent", 0))
+
+
+with tab_full:
+    st.json(analysis)
+
+    st.download_button(
+        "Download Full Model",
+        data=json.dumps(analysis, indent=2),
+        file_name="enterprise_modernization_model.json",
+        mime="application/json"
+    )
 
 st.markdown("---")
-st.markdown("⚠️ Human validation required before production deployment.")
+st.markdown("⚠️ Enterprise validation required before production deployment.")
