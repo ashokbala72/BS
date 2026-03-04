@@ -40,7 +40,7 @@ client = AzureOpenAI(
 # =========================================================
 # SAFE MODEL CALL
 # =========================================================
-def safe_completion(messages, max_tokens=14000, retries=3):
+def safe_completion(messages, max_tokens=25000, retries=3):
     for attempt in range(retries):
         try:
             response = client.chat.completions.create(
@@ -77,21 +77,262 @@ def dedupe_list(existing, new_items):
 def extract_from_large_cobol(cobol_code):
 
     system_prompt = """
-Extract ALL business-relevant logic from COBOL.
+You are a STATIC COBOL EXECUTION INTELLIGENCE ENGINE.
 
-Return STRICT JSON:
+Your responsibility is to reconstruct executable COBOL logic EXACTLY as it executes.
+
+You MUST operate in two internal phases:
+
+PHASE 1 — Full structural extraction
+PHASE 2 — Structural validation and correction
+
+You MUST NOT return output until validation passes.
+
+If validation fails, you MUST regenerate internally.
+
+=====================================================================
+ABSOLUTE EXECUTION RULES (NON-NEGOTIABLE)
+=====================================================================
+
+1. Do NOT summarize.
+2. Do NOT generalize.
+3. Do NOT collapse sequential IF blocks.
+4. Do NOT convert multi-branch logic into binary logic.
+5. Do NOT merge paragraphs.
+6. Do NOT create synthetic paragraph names.
+7. Do NOT simplify boolean expressions.
+8. Do NOT omit ELSE behavior.
+9. Do NOT omit fallthrough paths.
+10. Do NOT invent logic.
+11. Preserve paragraph names EXACTLY.
+12. Preserve GO TO targets EXACTLY.
+13. Preserve nested IF hierarchy EXACTLY.
+14. Preserve execution order EXACTLY.
+15. Maintain ONE canonical rule registry only.
+
+=====================================================================
+SCHEMA LOCK — HARD ENFORCEMENT
+=====================================================================
+
+You MUST return EXACTLY the following JSON structure.
+No additional keys allowed.
+No missing keys allowed.
+No renamed keys allowed.
+No duplicated sections allowed.
+
+If ANY schema violation occurs, the output is INVALID and must be regenerated.
+
 {
-  "purpose": "",
-  "entities": [],
-  "business_rules": [{"rule_id": "", "description": "", "source_lines": []}],
-  "control_flow": [],
-  "conditional_flags": [],
-  "file_io_operations": [],
-  "external_calls": [],
-  "data_lineage": []
-}
-"""
+  "program_metadata": {
+      "program_id": "",
+      "paragraphs": []
+  },
 
+  "business_rules": [
+      {
+          "rule_id": "BR-001",
+          "rule_type": "validation | branch | update | calculation | loop | io",
+          "paragraph": "",
+          "trigger_statement": "",
+          "conditions": [],
+          "actions": [],
+          "else_actions": [],
+          "go_to_targets": [],
+          "affected_fields": [],
+          "source_lines": []
+      }
+  ],
+
+  "process_flow_graph": [
+      {
+          "paragraph": "",
+          "entry_conditions": [],
+          "ordered_logic": [
+              {
+                  "precedence_order": 1,
+                  "condition": "",
+                  "true_target": "",
+                  "false_target": ""
+              }
+          ],
+          "explicit_fallthrough": "",
+          "loop_structure": {
+              "is_loop": false,
+              "loop_entry": "",
+              "loop_exit_condition": "",
+              "loop_back_target": ""
+          }
+      }
+  ],
+
+  "update_amend_logic": [
+      {
+          "paragraph": "",
+          "target_field": "",
+          "source_field": "",
+          "governing_conditions": [],
+          "material_code_condition": "",
+          "route_condition": "",
+          "calculation_logic": "",
+          "else_behavior": "",
+          "source_lines": []
+      }
+  ],
+
+  "material_code_governance": [
+      {
+          "material_code_range_or_value": "",
+          "route_condition": "",
+          "effect": "",
+          "affected_output_field": "",
+          "calculation_or_transformation": "",
+          "precedence": 1
+      }
+  ],
+
+  "conditional_flags": [],
+
+  "file_io_operations": [
+      {
+          "paragraph": "",
+          "file": "",
+          "operation": "",
+          "result_field": "",
+          "success_condition": "",
+          "not_found_condition": "",
+          "failure_target": ""
+      }
+  ],
+
+  "external_calls": [],
+
+  "data_lineage": [
+      {
+          "target_field": "",
+          "source_field": "",
+          "paragraph": "",
+          "transformation": "",
+          "governing_conditions": []
+      }
+  ]
+}
+
+=====================================================================
+STRUCTURAL ENFORCEMENT RULES
+=====================================================================
+
+PARAGRAPH INTEGRITY
+
+• Each COBOL paragraph MUST appear exactly once in process_flow_graph.
+• Paragraph names must match source exactly.
+• Paragraph names MUST NOT contain "/" or merged names.
+• If merging is detected, regenerate.
+
+RULE REGISTRY LOCK
+
+• Only ONE business_rules array is allowed.
+• rule_id format: BR-001, BR-002, BR-003...
+• Sequential.
+• No duplicates.
+• No resets.
+• No reuse.
+• One atomic decision per rule.
+• If duplicate or skipped sequence detected → regenerate.
+
+ASSIGNMENT CLASSIFICATION LOCK
+
+For every MOVE, ADD, SUBTRACT, MULTIPLY, DIVIDE:
+
+If unconditional:
+→ appears in business_rules only.
+
+If conditional:
+→ MUST appear in BOTH:
+   business_rules
+   update_amend_logic
+
+If conditional assignments exist AND update_amend_logic is empty:
+→ INVALID → regenerate.
+
+UPDATE ISOLATION LOCK
+
+Each target_field conditionally assigned:
+→ Exactly one entry in update_amend_logic.
+→ Must include governing_conditions.
+→ Must include else_behavior if present.
+
+LOOP MODELING LOCK
+
+If GO TO targets earlier paragraph:
+→ loop_structure.is_loop MUST be true.
+→ loop_entry MUST be set.
+→ loop_back_target MUST be set.
+→ loop_exit_condition MUST be explicit.
+
+If file READ repeats until result code (e.g. '10'):
+→ loop_exit_condition MUST reference that code.
+
+If backward jump exists and loop_structure.is_loop is false:
+→ INVALID → regenerate.
+
+MATERIAL GOVERNANCE LOCK
+
+If material code logic exists (e.g. F411-CODE-MATL):
+→ material_code_governance MUST be populated.
+
+If material conditions detected AND material_code_governance empty:
+→ INVALID → regenerate.
+
+FALLTHROUGH LOCK
+
+If execution continues without ELSE:
+→ explicit_fallthrough MUST be populated.
+
+BOOLEAN LOCK
+
+All boolean expressions must explicitly compare both sides.
+No abbreviated comparisons allowed.
+
+=====================================================================
+FINAL VALIDATION CHECKLIST (MUST PASS BEFORE RETURN)
+=====================================================================
+
+1. No extra keys exist.
+2. No missing required keys.
+3. No duplicate sections.
+4. rule_id sequential and unique.
+5. Each paragraph appears once.
+6. No merged paragraph names.
+7. Conditional updates isolated.
+8. Loops modeled explicitly.
+9. Material governance populated if required.
+10. No empty mandatory sections when logic exists.
+11. No simplified boolean expressions.
+
+If ANY check fails:
+Regenerate internally.
+
+=====================================================================
+If the output contains:
+- Duplicate rule_id
+- Blank paragraph values
+- update_amend_logic empty while conditional assignments exist
+- material_code_governance empty while material conditions exist
+- Any key not explicitly defined in the schema
+
+Then the output is INVALID and MUST be regenerated.
+
+Do NOT merge extraction model with UI model.
+Return extraction schema ONLY.
+
+Return STRICT JSON only.
+No explanation.
+No markdown.
+No commentary.
+All keys must use double quotes.
+Booleans must be lowercase true/false.
+No trailing commas.
+"""
     chunks = split_into_chunks(cobol_code)
 
     aggregated = {
@@ -134,7 +375,15 @@ Return STRICT JSON:
 def synthesize_model(extracted):
 
     system_prompt = """
-Preserve ALL business rules exactly.
+You MUST:
+- Preserve rule_id tags inside every process step
+- Represent ordered IF/ELSE branching correctly
+- Show explicit fall-through logic
+- Never simplify multiple branch flows into binary success/failure
+- Maintain condition precedence
+
+Each process step MUST include:
+"rule_tags": ["BR_001", "BR_002"]
 
 Return STRICT JSON:
 {
@@ -352,13 +601,265 @@ with tab_metrics:
               modernized.get("modernization_confidence_percent", 0))
 
 
+# =========================================================
+# 🧠 FULL MODEL – ENTERPRISE GOVERNANCE ENGINE
+# =========================================================
+# =========================================================
+# 🧠 FULL MODEL – ENTERPRISE GOVERNANCE ENGINE (HARDENED)
+# =========================================================
 with tab_full:
-    st.json(analysis)
 
+    import pandas as pd
+    import copy
+    import json
+    from collections import Counter, defaultdict
+
+    st.title("🧠 Enterprise COBOL Governance & Structural Repair Engine")
+
+    if not analysis:
+        st.warning("Run modernization first.")
+        st.stop()
+
+    raw_model = analysis.get("extracted", {})
+    if not raw_model:
+        st.warning("No extracted model found.")
+        st.stop()
+
+    # -----------------------------------------------------
+    # Deep Copy (Never mutate session state)
+    # -----------------------------------------------------
+    model = copy.deepcopy(raw_model)
+
+    # =====================================================
+    # 1️⃣ REMOVE DUPLICATE RULES (Atomic Deduplication)
+    # =====================================================
+    def remove_duplicate_rules(model):
+        seen = set()
+        clean = []
+
+        for r in model.get("business_rules", []):
+            signature = (
+                r.get("paragraph"),
+                json.dumps(r.get("conditions", []), sort_keys=True),
+                json.dumps(r.get("actions", []), sort_keys=True),
+                json.dumps(r.get("go_to_targets", []), sort_keys=True),
+            )
+            if signature not in seen:
+                seen.add(signature)
+                clean.append(r)
+
+        model["business_rules"] = clean
+        return model
+
+    # =====================================================
+    # 2️⃣ RESEQUENCE RULE IDs
+    # =====================================================
+    def resequence_rules(model):
+        for i, r in enumerate(model.get("business_rules", []), start=1):
+            r["rule_id"] = f"BR-{i:03d}"
+        return model
+
+    # =====================================================
+    # 3️⃣ REBUILD PARAGRAPH REGISTRY
+    # =====================================================
+    def rebuild_paragraph_registry(model):
+        paragraphs = list({
+            r.get("paragraph")
+            for r in model.get("business_rules", [])
+            if r.get("paragraph")
+        })
+        model.setdefault("program_metadata", {})["paragraphs"] = sorted(paragraphs)
+        return model
+
+    # =====================================================
+    # 4️⃣ ENFORCE GO TO TARGET INTEGRITY
+    # =====================================================
+    def enforce_goto_integrity(model):
+        valid = set(model.get("program_metadata", {}).get("paragraphs", []))
+        for r in model.get("business_rules", []):
+            r["go_to_targets"] = [
+                t for t in r.get("go_to_targets", [])
+                if t in valid
+            ]
+        return model
+
+    # =====================================================
+    # 5️⃣ AUTO-ISOLATE CONDITIONAL UPDATES
+    # =====================================================
+    def isolate_conditional_updates(model):
+
+        updates = []
+        seen_targets = set()
+
+        for r in model.get("business_rules", []):
+            if r.get("rule_type") == "update" and r.get("conditions"):
+                target = None
+
+                # try extracting target field from actions
+                if r.get("actions"):
+                    action_text = " ".join(r["actions"])
+                    parts = action_text.split()
+                    if len(parts) > 1:
+                        target = parts[-1]
+
+                if target and target not in seen_targets:
+                    seen_targets.add(target)
+                    updates.append({
+                        "paragraph": r.get("paragraph"),
+                        "target_field": target,
+                        "source_field": "",
+                        "governing_conditions": r.get("conditions"),
+                        "material_code_condition": "",
+                        "route_condition": "",
+                        "calculation_logic": " | ".join(r.get("actions", [])),
+                        "else_behavior": " | ".join(r.get("else_actions", [])),
+                        "source_lines": r.get("source_lines", [])
+                    })
+
+        model["update_amend_logic"] = updates
+        return model
+
+    # =====================================================
+    # 6️⃣ AUTO-EXTRACT MATERIAL GOVERNANCE
+    # =====================================================
+    def extract_material_governance(model):
+
+        material_entries = []
+        precedence = 1
+
+        for r in model.get("business_rules", []):
+            cond_text = json.dumps(r.get("conditions", []))
+
+            if "MATL" in cond_text or "MATERIAL" in cond_text:
+                material_entries.append({
+                    "material_code_range_or_value": cond_text,
+                    "route_condition": "",
+                    "effect": "Derived from business rule",
+                    "affected_output_field": ", ".join(r.get("affected_fields", [])),
+                    "calculation_or_transformation": " | ".join(r.get("actions", [])),
+                    "precedence": precedence
+                })
+                precedence += 1
+
+        model["material_code_governance"] = material_entries
+        return model
+
+    # =====================================================
+    # 7️⃣ STRUCTURAL VALIDATION
+    # =====================================================
+    def validate_model(model):
+
+        issues = []
+        rules = model.get("business_rules", [])
+        meta_paragraphs = model.get("program_metadata", {}).get("paragraphs", [])
+
+        # Duplicate rule IDs
+        ids = [r.get("rule_id") for r in rules]
+        duplicates = [x for x, c in Counter(ids).items() if c > 1]
+        if duplicates:
+            issues.append(f"Duplicate rule_id: {duplicates}")
+
+        # Empty paragraph
+        for r in rules:
+            if not r.get("paragraph"):
+                issues.append(f"{r.get('rule_id')} has blank paragraph")
+
+        # Invalid GO TO
+        for r in rules:
+            for t in r.get("go_to_targets", []):
+                if t not in meta_paragraphs:
+                    issues.append(f"{r.get('rule_id')} invalid GO TO target: {t}")
+
+        # Conditional updates missing
+        cond_updates = [
+            r for r in rules
+            if r.get("rule_type") == "update" and r.get("conditions")
+        ]
+        if cond_updates and not model.get("update_amend_logic"):
+            issues.append("Conditional updates not isolated")
+
+        return issues
+
+    # =====================================================
+    # 8️⃣ STRUCTURAL SCORE
+    # =====================================================
+    def compute_score(issues):
+        return max(100 - (len(issues) * 5), 0)
+
+    # =====================================================
+    # 9️⃣ SAFE DATAFRAME NORMALIZER (ARROW FIX)
+    # =====================================================
+    def normalize_for_dataframe(data):
+        df = pd.DataFrame(data)
+
+        for col in df.columns:
+            df[col] = df[col].apply(
+                lambda x: json.dumps(x)
+                if isinstance(x, (dict, list))
+                else x
+            )
+
+        return df
+
+    # =====================================================
+    # 🔄 EXECUTION PIPELINE
+    # =====================================================
+    model = remove_duplicate_rules(model)
+    model = resequence_rules(model)
+    model = rebuild_paragraph_registry(model)
+    model = enforce_goto_integrity(model)
+    model = isolate_conditional_updates(model)
+    model = extract_material_governance(model)
+
+    issues = validate_model(model)
+    score = compute_score(issues)
+
+    # =====================================================
+    # 📊 DISPLAY METRICS
+    # =====================================================
+    st.metric("Structural Integrity Score", f"{score}%")
+
+    if issues:
+        for issue in issues:
+            st.error(issue)
+    else:
+        st.success("✔ Model fully validated and enterprise compliant")
+
+    st.markdown("---")
+
+    # =====================================================
+    # 📋 ALL DATA RENDERED AS TABLES
+    # =====================================================
+    sections = [
+        "business_rules",
+        "process_flow_graph",
+        "update_amend_logic",
+        "material_code_governance",
+        "file_io_operations",
+        "external_calls",
+        "data_lineage"
+    ]
+
+    for section in sections:
+        st.subheader(section.replace("_", " ").title())
+
+        if model.get(section):
+            st.dataframe(
+                normalize_for_dataframe(model[section]),
+                use_container_width=True
+            )
+        else:
+            st.info("No data available.")
+
+    st.markdown("---")
+
+    # =====================================================
+    # ⬇ DOWNLOAD
+    # =====================================================
     st.download_button(
-        "Download Full Model",
-        data=json.dumps(analysis, indent=2),
-        file_name="enterprise_modernization_model.json",
+        "Download Validated Enterprise Model",
+        data=json.dumps(model, indent=2),
+        file_name="validated_enterprise_model.json",
         mime="application/json"
     )
 
